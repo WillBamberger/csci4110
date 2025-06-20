@@ -1,143 +1,209 @@
 #include <mpi.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <assert.h>
+#include <math.h>
+#include <vector>
 #include "common.h"
+
+#define BIN_SIZE 0.01
+
+extern double size;
+
+int get_bin_index(int bins_per_row, double x, double y)
+{
+    int row = y / BIN_SIZE;
+    int col = x / BIN_SIZE;
+    return row * bins_per_row + col;
+}
 
 //
 //  benchmarking program
 //
-int main( int argc, char **argv )
-{    
-    int navg, nabsavg=0;
-    double dmin, absmin=1.0,davg,absavg=0.0;
-    double rdavg,rdmin;
-    int rnavg; 
- 
+int main(int argc, char **argv)
+{
+    int navg, nabsavg = 0;
+    double dmin, absmin = 1.0, davg, absavg = 0.0;
+    double rdavg, rdmin;
+    int rnavg;
     //
     //  process command line parameters
     //
-    if( find_option( argc, argv, "-h" ) >= 0 )
+    if (find_option(argc, argv, "-h") >= 0)
     {
-        printf( "Options:\n" );
-        printf( "-h to see this help\n" );
-        printf( "-n <int> to set the number of particles\n" );
-        printf( "-o <filename> to specify the output file name\n" );
-        printf( "-s <filename> to specify a summary file name\n" );
-        printf( "-no turns off all correctness checks and particle output\n");
+        printf("Options:\n");
+        printf("-h to see this help\n");
+        printf("-n <int> to set the number of particles\n");
+        printf("-o <filename> to specify the output file name\n");
+        printf("-s <filename> to specify a summary file name\n");
+        printf("-no turns off all correctness checks and particle output\n");
         return 0;
     }
-    
-    int n = read_int( argc, argv, "-n", 1000 );
-    char *savename = read_string( argc, argv, "-o", NULL );
-    char *sumname = read_string( argc, argv, "-s", NULL );
-    
+
+    int n = read_int(argc, argv, "-n", 1000);
+    char *savename = read_string(argc, argv, "-o", NULL);
+    char *sumname = read_string(argc, argv, "-s", NULL);
+
     //
     //  set up MPI
     //
     int n_proc, rank;
-    MPI_Init( &argc, &argv );
-    MPI_Comm_size( MPI_COMM_WORLD, &n_proc );
-    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
-    
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &n_proc);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
     //
     //  allocate generic resources
     //
-    FILE *fsave = savename && rank == 0 ? fopen( savename, "w" ) : NULL;
-    FILE *fsum = sumname && rank == 0 ? fopen ( sumname, "a" ) : NULL;
+    FILE *fsave = savename && rank == 0 ? fopen(savename, "w") : NULL;
+    FILE *fsum = sumname && rank == 0 ? fopen(sumname, "a") : NULL;
 
-
-    particle_t *particles = (particle_t*) malloc( n * sizeof(particle_t) );
-    
     MPI_Datatype PARTICLE;
-    MPI_Type_contiguous( 6, MPI_DOUBLE, &PARTICLE );
-    MPI_Type_commit( &PARTICLE );
-    
-    //
-    //  set up the data partitioning across processors
-    //
-    int particle_per_proc = (n + n_proc - 1) / n_proc;
-    int *partition_offsets = (int*) malloc( (n_proc+1) * sizeof(int) );
-    for( int i = 0; i < n_proc+1; i++ )
-        partition_offsets[i] = min( i * particle_per_proc, n );
-    
-    int *partition_sizes = (int*) malloc( n_proc * sizeof(int) );
-    for( int i = 0; i < n_proc; i++ )
-        partition_sizes[i] = partition_offsets[i+1] - partition_offsets[i];
-    
-    //
-    //  allocate storage for local partition
-    //
-    int nlocal = partition_sizes[rank];
-    particle_t *local = (particle_t*) malloc( nlocal * sizeof(particle_t) );
-    
+    MPI_Type_contiguous(6, MPI_DOUBLE, &PARTICLE);
+    MPI_Type_commit(&PARTICLE);
+
+    particle_t *particles = (particle_t *)malloc(n * sizeof(particle_t));
+
     //
     //  initialize and distribute the particles (that's fine to leave it unoptimized)
     //
-    set_size( n );
-    if( rank == 0 )
-        init_particles( n, particles );
-    MPI_Scatterv( particles, partition_sizes, partition_offsets, PARTICLE, local, nlocal, PARTICLE, 0, MPI_COMM_WORLD );
-    
+    set_size(n);
+    if (rank == 0)
+        init_particles(n, particles);
+
+    int *partition_offsets = (int *)malloc((n_proc + 1) * sizeof(int));
+    int particle_per_proc = (n + n_proc - 1) / n_proc;
+    for (int i = 0; i <= n_proc; i++)
+        partition_offsets[i] = i * particle_per_proc > n ? n : i * particle_per_proc;
+
+    int *partition_sizes = (int *)malloc(n_proc * sizeof(int));
+    for (int i = 0; i < n_proc; i++)
+        partition_sizes[i] = partition_offsets[i + 1] - partition_offsets[i];
+
+    int nlocal = partition_sizes[rank];
+    particle_t *local = (particle_t *)malloc(nlocal * sizeof(particle_t));
+    std::vector<particle_t> ghosts;
+
+    MPI_Scatterv(particles, partition_sizes, partition_offsets, PARTICLE, local, nlocal, PARTICLE, 0, MPI_COMM_WORLD);
+
+    int bins_per_row = ceil(size / BIN_SIZE);
+    int num_bins = bins_per_row * bins_per_row;
+    std::vector<std::vector<particle_t *>> bins(num_bins);
+
     //
     //  simulate a number of time steps
     //
-    double simulation_time = read_timer( );
-    for( int step = 0; step < NSTEPS; step++ )
+    double simulation_time = read_timer();
+    for (int step = 0; step < NSTEPS; step++)
     {
         navg = 0;
         dmin = 1.0;
         davg = 0.0;
-        // 
-        //  collect all global data locally (not good idea to do)
-        //
-        MPI_Allgatherv( local, nlocal, PARTICLE, particles, partition_sizes, partition_offsets, PARTICLE, MPI_COMM_WORLD );
-        
-        //
-        //  save current step if necessary (slightly different semantics than in other codes)
-        //
-        if( find_option( argc, argv, "-no" ) == -1 )
-          if( fsave && (step%SAVEFREQ) == 0 )
-            save( fsave, n, particles );
-        
-        //
-        //  compute all forces
-        //
-        for( int i = 0; i < nlocal; i++ )
+
+        for (auto &bin : bins) bin.clear();
+        ghosts.clear();
+
+        for (int i = 0; i < nlocal; i++)
         {
             local[i].ax = local[i].ay = 0;
-            for (int j = 0; j < n; j++ )
-                apply_force( local[i], particles[j], &dmin, &davg, &navg );
+            int bin_index = get_bin_index(bins_per_row, local[i].x, local[i].y);
+            bins[bin_index].push_back(&local[i]);
         }
-     
-        if( find_option( argc, argv, "-no" ) == -1 )
+
+     for (int dir = -1; dir <= 1; dir += 2)
         {
-          
-          MPI_Reduce(&davg,&rdavg,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
-          MPI_Reduce(&navg,&rnavg,1,MPI_INT,MPI_SUM,0,MPI_COMM_WORLD);
-          MPI_Reduce(&dmin,&rdmin,1,MPI_DOUBLE,MPI_MIN,0,MPI_COMM_WORLD);
-
- 
-          if (rank == 0){
-            //
-            // Computing statistical data
-            //
-            if (rnavg) {
-              absavg +=  rdavg/rnavg;
-              nabsavg++;
+            int neighbor = rank + dir;
+            if (neighbor >= 0 && neighbor < n_proc)
+            {
+                int send_count = 0;
+                for (int i = 0; i < nlocal; i++)
+                {
+                    double stripe_width = size / n_proc;
+                    double edge = (dir == -1) ? (rank * stripe_width) : ((rank + 1) * stripe_width);
+                    if (fabs(local[i].x - edge) < 2 * BIN_SIZE)
+                        send_count++;
+                }
+                std::vector<particle_t> sendbuf(send_count);
+                int idx = 0;
+                for (int i = 0; i < nlocal; i++)
+                {
+                    double stripe_width = size / n_proc;
+                    double edge = (dir == -1) ? (rank * stripe_width) : ((rank + 1) * stripe_width);
+                    if (fabs(local[i].x - edge) < 2 * BIN_SIZE)
+                        sendbuf[idx++] = local[i];
+                }
+                int recv_count;
+                MPI_Sendrecv(&send_count, 1, MPI_INT, neighbor, 0,
+                             &recv_count, 1, MPI_INT, neighbor, 0,
+                             MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                std::vector<particle_t> recvbuf(recv_count);
+                MPI_Sendrecv(sendbuf.data(), send_count, PARTICLE, neighbor, 1,
+                             recvbuf.data(), recv_count, PARTICLE, neighbor, 1,
+                             MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                ghosts.insert(ghosts.end(), recvbuf.begin(), recvbuf.end());
             }
-            if (rdmin < absmin) absmin = rdmin;
-          }
         }
 
-        //
+        for (auto &g : ghosts)
+        {
+            int bin_index = get_bin_index(bins_per_row, g.x, g.y);
+            bins[bin_index].push_back(&g);
+        }
+
+        for (int row = 0; row < bins_per_row; row++)
+        {
+            for (int col = 0; col < bins_per_row; col++)
+            {
+                int bin_idx = row * bins_per_row + col;
+                for (auto *p : bins[bin_idx])
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        for (int dy = -1; dy <= 1; dy++)
+                        {
+                            int nr = row + dy, nc = col + dx;
+                            if (nr >= 0 && nr < bins_per_row && nc >= 0 && nc < bins_per_row)
+                            {
+                                int neighbor_idx = nr * bins_per_row + nc;
+                                for (auto *q : bins[neighbor_idx])
+                                    apply_force(*p, *q, &dmin, &davg, &navg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+	//
         //  move particles
         //
-        for( int i = 0; i < nlocal; i++ )
-            move( local[i] );
+        for (int i = 0; i < nlocal; i++)
+            move(local[i]);
+
+        if (find_option(argc, argv, "-no") == -1)
+        {
+            MPI_Reduce(&davg, &rdavg, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+            MPI_Reduce(&navg, &rnavg, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+            MPI_Reduce(&dmin, &rdmin, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+
+            if (rank == 0){
+	      //
+              // Computing statistical data
+              //
+              if (rnavg){
+                absavg += rdavg / rnavg;
+                nabsavg++;
+              }
+              if (rdmin < absmin) absmin = rdmin;
+            }
+        }
+
+        if (find_option(argc, argv, "-no") == -1 && fsave && (step % SAVEFREQ) == 0 && rank == 0)
+        {
+            MPI_Gatherv(local, nlocal, PARTICLE, particles, partition_sizes, partition_offsets, PARTICLE, 0, MPI_COMM_WORLD);
+            save(fsave, n, particles);
+        }
     }
-    simulation_time = read_timer( ) - simulation_time;
-  
+    simulation_time = read_timer() - simulation_time;
+    
     if (rank == 0) {  
       printf( "n = %d, simulation time = %g seconds", n, simulation_time);
 

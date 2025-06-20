@@ -1,0 +1,25 @@
+CPU-GPU copy time = 5.1e-05 seconds
+n = 500, simulation time = 0.018352 seconds
+n = 500, absmin = 1.000000, absavg = 1.000000
+CPU-GPU copy time = 4.1e-05 seconds
+n = 1000, simulation time = 0.028509 seconds
+n = 1000, absmin = 1.000000, absavg = 1.000000
+CPU-GPU copy time = 4.2e-05 seconds
+n = 2000, simulation time = 0.047444 seconds
+n = 2000, absmin = 1.000000, absavg = 1.000000
+CPU-GPU copy time = 0.000132 seconds
+n = 4000, simulation time = 0.090481 seconds
+n = 4000, absmin = 1.000000, absavg = 1.000000
+CPU-GPU copy time = 0.000147 seconds
+n = 8000, simulation time = 0.178972 seconds
+n = 8000, absmin = 1.000000, absavg = 1.000000
+n = 500, simulation time = 0.032553 seconds
+n = 500, absmin = 0.824590, absavg = 0.956633
+n = 1000, simulation time = 0.064644 seconds
+n = 1000, absmin = 0.814342, absavg = 0.956325
+n = 2000, simulation time = 0.132464 seconds
+n = 2000, absmin = 0.801291, absavg = 0.953524
+n = 4000, simulation time = 0.269664 seconds
+n = 4000, absmin = 0.780680, absavg = 0.956791
+n = 8000, simulation time = 0.56394 seconds
+/var/spool/slurm/d/job32827874/slurm_script: line 29: 59431 Segmentation fault      (core dumped) ./autocorrect -s serial.txt

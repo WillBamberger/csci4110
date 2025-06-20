@@ -3,6 +3,10 @@
 #include <assert.h>
 #include <math.h>
 #include "common.h"
+#include <vector>
+
+extern double size;
+const double cutoff = 0.01;
 
 //
 //  benchmarking program
@@ -34,7 +38,15 @@ int main( int argc, char **argv )
     particle_t *particles = (particle_t*) malloc( n * sizeof(particle_t) );
     set_size( n );
     init_particles( n, particles );
-    
+
+    int bins_per_row = (int)(size / cutoff) + 1;
+    int bin_count = bins_per_row * bins_per_row;
+    std::vector<std::vector<particle_t*>> bins(bin_count);
+    auto get_bin_index = [&](double x, double y) {
+        int bx = (int)(x / cutoff);
+        int by = (int)(y / cutoff);
+        return by * bins_per_row + bx;      
+	};
     //
     //  simulate a number of time steps
     //
@@ -48,13 +60,32 @@ int main( int argc, char **argv )
         //
         //  compute forces
         //
-        for( int i = 0; i < n; i++ )
-        {
+        for (auto& bin : bins) bin.clear();
+
+        for (int i = 0; i < n; i++) {
             particles[i].ax = particles[i].ay = 0;
-            for (int j = 0; j < n; j++ )
-				apply_force( particles[i], particles[j],&dmin,&davg,&navg);
+            int index = get_bin_index(particles[i].x, particles[i].y);
+            bins[index].push_back(&particles[i]);
         }
- 
+
+        for (int i = 0; i < bin_count; i++) {
+            int cx = i % bins_per_row;
+            int cy = i / bins_per_row;
+            for (auto* p1 : bins[i]) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dy = -1; dy <= 1; dy++) {
+                        int nx = cx + dx;
+                        int ny = cy + dy;
+                        if (nx >= 0 && ny >= 0 && nx < bins_per_row && ny < bins_per_row) {
+                            int neighbor_index = ny * bins_per_row + nx;
+                            for (auto* p2 : bins[neighbor_index]) {
+                                apply_force(*p1, *p2, &dmin, &davg, &navg);
+                            }
+                        }
+                    }
+                }
+            }
+        }    
         //
         //  move particles
         //

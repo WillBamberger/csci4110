@@ -1,0 +1,28 @@
+rm: cannot remove 'openmp_sum.txt': No such file or directory
+n = 500, simulation time = 0.042244 seconds
+n = 500,threads = 1, simulation time = 0.041385 seconds
+n = 500,threads = 2, simulation time = 0.018633 seconds
+n = 500,threads = 4, simulation time = 0.013871 seconds
+n = 500,threads = 8, simulation time = 0.017458 seconds
+n = 500,threads = 16, simulation time = 0.02552 seconds
+n = 1000,threads = 2, simulation time = 0.034905 seconds
+n = 2000,threads = 4, simulation time = 0.03809 seconds
+n = 4000,threads = 8, simulation time = 0.052153 seconds
+n = 8000,threads = 16, simulation time = 0.074227 seconds
+
+Strong scaling estimates are :
+    1.02    2.27    3.05    2.42    1.66 (speedup)
+    1.02    1.13    0.76    0.30    0.10 (efficiency)    for
+       1       2       4       8      16 threads/processors
+
+Average strong scaling efficiency:    0.66 
+
+Weak scaling estimates are :
+    1.02    1.21    1.11    0.81    0.57 (efficiency)    for
+       1       2       4       8      16 threads/processors
+
+Average weak scaling efficiency:    0.94 
+
+
+openmp Grade =   94.35
+

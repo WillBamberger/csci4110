@@ -2,96 +2,139 @@
 #include <stdio.h>
 #include <assert.h>
 #include <math.h>
+#include <vector>
 #include "common.h"
 #include "omp.h"
+
+#define BIN_SIZE 0.01
+
+extern double size;
+
+int get_bin_index(int bins_per_row, double x, double y)
+{
+    int row = y / BIN_SIZE;
+    int col = x / BIN_SIZE;
+    return row * bins_per_row + col;
+}
 
 //
 //  benchmarking program
 //
-int main( int argc, char **argv )
+int main(int argc, char **argv)
 {   
-    int navg,nabsavg=0,numthreads; 
-    double dmin, absmin=1.0,davg,absavg=0.0;
-	
-    if( find_option( argc, argv, "-h" ) >= 0 )
+    int navg, nabsavg = 0, numthreads; 
+    double dmin, absmin = 1.0, davg, absavg = 0.0;
+
+    if (find_option(argc, argv, "-h") >= 0)
     {
-        printf( "Options:\n" );
-        printf( "-h to see this help\n" );
-        printf( "-n <int> to set number of particles\n" );
-        printf( "-o <filename> to specify the output file name\n" );
-        printf( "-s <filename> to specify a summary file name\n" ); 
-        printf( "-no turns off all correctness checks and particle output\n");   
+        printf("Options:\n");
+        printf("-h to see this help\n");
+        printf("-n <int> to set number of particles\n");
+        printf("-o <filename> to specify the output file name\n");
+        printf("-s <filename> to specify a summary file name\n"); 
+        printf("-no turns off all correctness checks and particle output\n");   
         return 0;
     }
 
-    int n = read_int( argc, argv, "-n", 1000 );
-    char *savename = read_string( argc, argv, "-o", NULL );
-    char *sumname = read_string( argc, argv, "-s", NULL );
+    int n = read_int(argc, argv, "-n", 1000);
+    char *savename = read_string(argc, argv, "-o", NULL);
+    char *sumname = read_string(argc, argv, "-s", NULL);
 
-    FILE *fsave = savename ? fopen( savename, "w" ) : NULL;
-    FILE *fsum = sumname ? fopen ( sumname, "a" ) : NULL;      
+    FILE *fsave = savename ? fopen(savename, "w") : NULL;
+    FILE *fsum = sumname ? fopen(sumname, "a") : NULL;      
 
-    particle_t *particles = (particle_t*) malloc( n * sizeof(particle_t) );
-    set_size( n );
-    init_particles( n, particles );
+    particle_t *particles = (particle_t *)malloc(n * sizeof(particle_t));
+    set_size(n);
+    init_particles(n, particles);
+
+    int bins_per_row = ceil(size / BIN_SIZE);
+    int num_bins = bins_per_row * bins_per_row;
 
     //
     //  simulate a number of time steps
     //
-    double simulation_time = read_timer( );
+    double simulation_time = read_timer();
 
-    #pragma omp parallel private(dmin) 
+    #pragma omp parallel
     {
-    numthreads = omp_get_num_threads();
-    for( int step = 0; step < 1000; step++ )
-    {
-        navg = 0;
-        davg = 0.0;
-	dmin = 1.0;
-        //
+        numthreads = omp_get_num_threads();
+        std::vector<std::vector<particle_t*>> local_bins(num_bins);
+
+        for (int step = 0; step < 1000; step++)
+        {
+            navg = 0;
+            davg = 0.0;
+            dmin = 1.0;
+	//
         //  compute all forces
         //
-        #pragma omp for reduction (+:navg) reduction(+:davg)
-        for( int i = 0; i < n; i++ )
-        {
-            particles[i].ax = particles[i].ay = 0;
-            for (int j = 0; j < n; j++ )
-                apply_force( particles[i], particles[j],&dmin,&davg,&navg);
-        }
-        
-		
-        //
+            
+            for (int i = 0; i < num_bins; i++)
+                local_bins[i].clear();
+
+                #pragma omp for nowait
+		for (int i = 0; i < n; i++)
+		{
+                	particles[i].ax = particles[i].ay = 0;
+                	int bin_index = get_bin_index(bins_per_row, particles[i].x, particles[i].y);
+                	local_bins[bin_index].push_back(&particles[i]);
+		}
+
+	 	#pragma omp for reduction(+:navg, davg)
+        	for (int bin_idx = 0; bin_idx < bins_per_row * bins_per_row; bin_idx++) {
+			int row = bin_idx / bins_per_row;
+			int col = bin_idx % bins_per_row;
+
+			 for (auto* p : local_bins[bin_idx]) {
+        			for (int dy = -1; dy <= 1; dy++) {
+            				int nr = row + dy;
+            				if (nr < 0 || nr >= bins_per_row) continue;
+
+            				for (int dx = -1; dx <= 1; dx++) {
+                				int nc = col + dx;
+                				if (nc < 0 || nc >= bins_per_row) continue;
+
+                				int neighbor_idx = nr * bins_per_row + nc;
+                				for (auto* q : local_bins[neighbor_idx])
+                    					apply_force(*p, *q, &dmin, &davg, &navg);
+            				}
+        			}
+    			}
+		}
+
+
+	//
         //  move particles
         //
-        #pragma omp for
-        for( int i = 0; i < n; i++ ) 
-            move( particles[i] );
-  
-        if( find_option( argc, argv, "-no" ) == -1 ) 
-        {
-          //
-          //  compute statistical data
-          //
-          #pragma omp master
-          if (navg) { 
-            absavg += davg/navg;
-            nabsavg++;
-          }
+            #pragma omp for simd
+            for (int i = 0; i < n; i++)
+                move(particles[i]);
 
-          #pragma omp critical
-	  if (dmin < absmin) absmin = dmin; 
-		
-          //
-          //  save if necessary
-          //
-          #pragma omp master
-          if( fsave && (step%SAVEFREQ) == 0 )
-              save( fsave, n, particles );
+            if (find_option(argc, argv, "-no") == -1)
+            {
+              //
+              //  compute statistical data
+              //
+              #pragma omp critical
+                {
+                    if (navg) {
+                        absavg += davg / navg;
+                        nabsavg++;
+                    }
+                    if (dmin < absmin) absmin = dmin;
+                }
+	  	//
+          	//  save if necessary
+          	//
+                #pragma omp master
+                if (fsave && (step % SAVEFREQ) == 0)
+                    save(fsave, n, particles);
+            }
         }
     }
-}
-    simulation_time = read_timer( ) - simulation_time;
-    
+
+    simulation_time = read_timer() - simulation_time;
+
     printf( "n = %d,threads = %d, simulation time = %g seconds", n,numthreads, simulation_time);
 
     if( find_option( argc, argv, "-no" ) == -1 )
