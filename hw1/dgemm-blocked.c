@@ -1,7 +1,7 @@
 const char* dgemm_desc = "Simple blocked dgemm.";
 
 #ifndef BLOCK_SIZE
-#define BLOCK_SIZE 41
+#define BLOCK_SIZE 64
 #endif
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))
@@ -11,21 +11,19 @@ const char* dgemm_desc = "Simple blocked dgemm.";
  *  C := C + A * B
  * where C is M-by-N, A is M-by-K, and B is K-by-N.
  */
-static void do_block(int lda, int M, int N, int K, double* A, double* B, double* C) {
-    // For each row i of A
-    for (int i = 0; i < M; ++i) {
+static void do_block(int lda, int M, int N, int K, double* restrict A, double* restrict B, double* restrict C) {
+    for (int j = 0; j < N; ++j) {
         // For each column j of B
-        for (int j = 0; j < N; ++j) {
+        for (int k = 0; k < K; ++k) {
             // Compute C(i,j)
-            double cij = C[i + j * lda];
-            for (int k = 0; k < K; ++k) {
-                cij += A[i + k * lda] * B[k + j * lda];
+            double bkj = B[k + j * lda];
+            // For each row i of A
+            for (int i = 0; i < M; ++i) {
+                C[i + j * lda] += A[i + k * lda] * bkj;
             }
-            C[i + j * lda] = cij;
         }
     }
 }
-
 /* This routine performs a dgemm operation
  *  C := C + A * B
  * where A, B, and C are lda-by-lda matrices stored in column-major format.

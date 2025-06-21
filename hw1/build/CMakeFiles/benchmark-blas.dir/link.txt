@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG "CMakeFiles/benchmark-blas.dir/dgemm-blas.c.o" CMakeFiles/benchmark.dir/benchmark.cpp.o -o benchmark-blas  /usr/lib64/libopenblas.so 
